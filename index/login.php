@@ -4,8 +4,8 @@
 //               \__ \/ _ \| |_| |) | | _ | |) |  <
 //               |___/_/ \_|___|___/|_||_||___/|_\_\
 //
-// --- index/login.php -----patch 4.0.8 ----2024-04-17--------------
-//                           LICENSE
+// --- index/login.php -----patch 4.1.0 ----2025-03-14--------------
+// LICENSE
 //
 // This program is free software. You can redistribute it and / or
 // modify it under the terms of the GNU General Public License (GPL)
@@ -21,7 +21,7 @@
 // See GNU General Public License for more details.
 // http://www.saldi.dk/dok/GNU_GPL_v2.html
 //
-// Copyright (c) 2003-2024 Saldi.dk ApS
+// Copyright (c) 2003-2025 Saldi.dk ApS
 // ----------------------------------------------------------------------
 // 20130919 Tjekkede ikke om der var opdateringer ved login i "hovedregnskab" Søg 20130919
 // 20140106	Tilføjet opslag i tmp_kode. Søg tmp_kode
@@ -59,13 +59,18 @@
 // 20230718 LOE - Made some modifications + 20230725
 // 20240417 PHR - Unified login - redirets to correct server.
 // 20240417 PHR - 'regnskab' and 'brugernavn' is now case-insensitive
-
+// 20240425 LOE - Made some modifications.
+// 20240502 LOE - Fixed some bugs concerning "PHP type juggling" and some variables checked for set or not
+// 20241202 LOE - Added session for retrieving globalId from other pages.
+// 20250314 LOE	- Sanitized some inputs to mitigate against XSS attack 
 ob_start(); //Starter output buffering
 @session_start();
 session_unset();
 session_destroy();
 
 @session_start();
+
+
 $s_id=session_id();
 $css="../css/std.css";
 $title="login";
@@ -112,6 +117,7 @@ $r=db_fetch_array(db_select("select var_value from settings where var_name='zip'
 if (isset($r['var_value'])) $_SESSION['zip']=$r['var_value'];
 
 
+
 #$r=db_fetch_array(db_select("select var_value from settings where var_grp='localization'",__FILE__ . " linje " . __LINE__));#20211006
 #if ($r['var_value']) $_SESSION['lang2']=$r['var_value'];
 
@@ -121,22 +127,46 @@ PRINT "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\">\n
 <html>\n
 <head><title>$title</title><meta http-equiv=\"content-type\" content=\"text/html; charset=$charset\">\n";
 if ($css) PRINT "<link rel=\"stylesheet\" type=\"text/css\" href=\"$css\" />";
+print "<link rel=\"stylesheet\" type=\"text/css\" href=\"../css/login.css\" />";
 print "</head>";
 
 $dbMail=NULL;
+function sanitize_input($input) {
+	// Trim the input to remove any leading/trailing whitespace
+	$input = trim($input);
+	
+	// Remove any special characters that might lead to SQL injection
+	$input = preg_replace('/[^\w\s\-]/', '', $input);
+	
+	if (strlen($input) > 80) {
+		return false;
+	}
+	
+	return $input;
+}
 
 if ((isset($_POST['regnskab']))||($_GET['login']=='test')) {
 	if ($regnskab = trim($_POST['regnskab'])){
-		$brugernavn = trim($_POST['brugernavn']);
-		$password = trim($_POST['password']); // password i formatet uppercase( md5( timestamp + uppercase( md5(original_password) ) ) )
-		(isset($_POST['timestamp']))?$timestamp = trim($_POST['timestamp']):$timestamp=NULL;
-		#(isset($_POST['timestamp']))?$timestamp = trim($_POST['timestamp']):$timestamp = date('Y-m-d'); #20211001 latr
-		if (isset($_POST['fortsaet'])) $fortsaet = $_POST['fortsaet'];
-		if (isset($_POST['afbryd'])) $afbryd = $_POST['afbryd'];
- #	}	else {
- #		 $regnskab = "test";
- #		 $brugernavn = "test";
- #		 $password = "test";
+		// $brugernavn = trim($_POST['brugernavn']);
+		// $password = trim($_POST['password']); // password i formatet uppercase( md5( timestamp + uppercase( md5(original_password) ) ) )
+		// (isset($_POST['timestamp']))?$timestamp = trim($_POST['timestamp']):$timestamp=NULL;
+		// #(isset($_POST['timestamp']))?$timestamp = trim($_POST['timestamp']):$timestamp = date('Y-m-d'); #20211001 latr
+		// if (isset($_POST['fortsaet'])) $fortsaet = $_POST['fortsaet'];
+		// if (isset($_POST['afbryd'])) $afbryd = $_POST['afbryd'];
+		#	}	else {
+		#		 $regnskab = "test";
+		#		 $brugernavn = "test";
+		#		 $password = "test";
+
+		// Sanitize
+		
+		$brugernavn = isset($_POST['brugernavn']) ? sanitize_input(htmlspecialchars(trim($_POST['brugernavn']), ENT_COMPAT, $charset)) : null;
+		$password = isset($_POST['password']) ? sanitize_input(htmlspecialchars(trim($_POST['password']), ENT_COMPAT, $charset)) : null;
+		$timestamp = isset($_POST['timestamp']) ? sanitize_input(trim($_POST['timestamp'])) : null;
+		$fortsaet = isset($_POST['fortsaet']) ? sanitize_input(trim($_POST['fortsaet'])) : null;
+		$afbryd = isset($_POST['afbryd']) ? sanitize_input(trim($_POST['afbryd'])) : null;
+
+
 	}
 	if (isset($_POST['huskmig'])) {
 		if ($_POST['huskmig']) setcookie("saldi_huskmig",$_POST['huskmig'].chr(9).$regnskab.chr(9).$brugernavn,time()+60*60*24*365*10);
@@ -187,7 +217,10 @@ if ((isset($_POST['regnskab']))||($_GET['login']=='test')) {
 		$bruger_max = $r['brugerantal']*1;	
 		$lukket     = trim($r['lukket']);
 		if(isset($r['email'] ))  $dbMail = $r['email'];
-		if(isset($r['global_id']))  $globalId = $r['global_id'];
+		if(isset($r['global_id'])){
+			  $globalId = $r['global_id'];
+			  $_SESSION['globalId']= $globalId; //20241202
+		}
 		if (!$db) {
 			$db=$sqdb;
 			db_modify("update regnskab set db='$sqdb' where id='$db_id'",__FILE__ . " linje " . __LINE__);
@@ -205,6 +238,7 @@ if ((isset($_POST['regnskab']))||($_GET['login']=='test')) {
 		$tmp=date("U");
 		if ($masterversion > "1.1.3") db_modify("update regnskab set sidst='$tmp' where id = '$db_id'",__FILE__ . " linje " . __LINE__);
 	}	else {
+/*
 		$url = "https://saldi.dk/locator/locator.php?action=getDBlocation&dbAlias=". urlencode($regnskab);
 		$result = json_decode(file_get_contents($url));
 		if (strpos($result,chr(9))) {
@@ -224,6 +258,7 @@ if ((isset($_POST['regnskab']))||($_GET['login']=='test')) {
 		}
 		if ($regnskab) $fejltxt="Regnskab $regnskab findes ikke";
 		login(htmlentities($regnskab,ENT_COMPAT,$charset),htmlentities($brugernavn,ENT_COMPAT,$charset),$fejltxt);
+*/
  	}
 } else {
 	
@@ -279,6 +314,7 @@ if ($db && !file_exists("../temp/.ht_$db.log")) {
 	fwrite($fp,"\\connect $db;\n");
 	fclose ($fp);
 }
+echo "db $db<br>";
 if ($db) {
 	$qtxt = "delete from online where (brugernavn='$asIs' or lower(brugernavn)='$low' or upper(brugernavn)='$up') ";
 	$qtxt.= "and db = '$db'";
@@ -322,13 +358,20 @@ if (isset ($brug_timestamp)) {
 	$userId=$r['id'];
 } else {
 	$asIs = db_escape_string($brugernavn);
-	$low  = mb_strtolower($asIs);
-	$up   = mb_strtoupper($asIs);
-	$qtxt = "select * from brugere where brugernavn='$asIs' or lower(brugernavn)='$low' or upper(brugernavn)='$up' limit 1";
-	$r  = db_fetch_array(db_select($qtxt,__FILE__ . " linje " . __LINE__));
-	$brugernavn = $r['brugernavn'];
-	$pw1  = md5($password);
-	$pw2  = saldikrypt($r['id'],$password);
+	$qtxt = "select * from brugere where brugernavn='$asIs'";
+	if ($r  = db_fetch_array(db_select($qtxt,__FILE__ . " linje " . __LINE__))) {
+		$brugernavn = $r['brugernavn'];
+		$pw1  = md5($password);
+		$pw2  = saldikrypt($r['id'],$password);
+	} else {
+		$low  = mb_strtolower($asIs);
+		$up   = mb_strtoupper($asIs);
+		$qtxt = "select * from brugere where lower(brugernavn)='$low' or upper(brugernavn)='$up' limit 1";
+		$r  = db_fetch_array(db_select($qtxt,__FILE__ . " linje " . __LINE__));
+		$brugernavn = $r['brugernavn'];
+		$pw1  = md5($password);
+		$pw2  = saldikrypt($r['id'],$password);
+	}
 	if ($r['kode']==$pw1 || $r['kode']==$pw2) {
 		$userId      = $r['id'];
 		$rettigheder = trim($r['rettigheder']);
@@ -358,12 +401,12 @@ if (isset ($brug_timestamp)) {
 		}
 	}
 }
-
-if (!$dbMail && $db != $sqdb) {
+if (!$dbMail && $db && $db != $sqdb) {
 	$qtxt = "select email from adresser where art = 'S'";
 	$r=db_fetch_array(db_select($qtxt,__FILE__ . " linje " . __LINE__));
 	$mainMail = $r['email'];
 } else $mainMail = $dbMail;
+# Check whether the user exsists
 if ($userId) {
 	$db_skriv_id=NULL;
 	if ($db_type=='mysql') {
@@ -375,6 +418,17 @@ if ($userId) {
 		if (!$connection) die( "Unable to connect to PostgreSQL");
 	}
 	include("../includes/connect.php"); #20111105
+
+	# Get 2fa keys for SMS
+	$qtxt = "SELECT var_value FROM settings WHERE var_name='nexmo_api_key' AND var_grp='2fa'";
+	$r = db_fetch_array(db_select($qtxt,__FILE__ . " linje " . __LINE__));
+	if(isset($r["var_value"])) $nexmo_api_key = $r["var_value"]; //20240502 Checks first that it is set before assigning it
+	
+
+	$qtxt = "SELECT var_value FROM settings WHERE var_name='nexmo_api_secret' AND var_grp='2fa'";
+	$r = db_fetch_array(db_select($qtxt,__FILE__ . " linje " . __LINE__));
+	if(isset($r["var_value"])) $nexmo_api_secret = $r["var_value"];
+
 
 	#	if (($regnskabsaar)&&($db)) {
 #		$qtxt = "update online set rettigheder='$rettigheder', regnskabsaar='$regnskabsaar', language_id='$languageId' ";
@@ -395,6 +449,95 @@ if ($userId) {
 	db_modify($qtxt,__FILE__ . " linje " . __LINE__);
 	if ($login=="cookie") {setcookie("saldi_std",$regnskab,time()+60*60*24*30);}
 	include("../includes/online.php"); #20111105
+
+	# ###################################################
+	#
+	# 2FA SETUP
+	#
+	# ###################################################
+	# If its not an administrator
+	#if ($db_id !== 1) {
+	if ((int)$db_id !== 1) { // 20240502 Without the integer this always evaluates to true on goods account as admin
+		$qtxt = "select email, twofactor, tmp_kode from brugere where id=$userId";
+		$r  = db_fetch_array(db_select($qtxt,__FILE__ . " linje " . __LINE__));
+	} else {
+		$r = array("twofactor" => FALSE);
+	}
+echo $db_id;
+	if (isset($r["twofactor"])  && isset($tlf_num)) {
+		$json_data = file_get_contents('php://input');
+		$decoded_data = json_decode($json_data, true);
+							       
+		$tlf_num = $r["email"];
+		$real_code = explode("|",$r["tmp_kode"])[0];
+		$real_expire = explode("|",$r["tmp_kode"])[1];
+		$status = NULL;
+
+		$code = $_POST['code_1'] . $_POST['code_2'] . $_POST['code_3'] . $_POST['code_4'] . $_POST['code_5'] . $_POST['code_6'];
+		if ($code && time() <= $real_expire) {
+			if ($real_code == $code) {
+				$status = "success";
+			} else {
+				$status = "Ikke en valid kode, prøv igen";
+			}
+		}
+		if ($bruger_id && $tlf_num) {
+		# The code has expired and a new one needs sent
+		if (time() > $real_expire && $status !== "success") {
+			$status = "En sms er sendt til din telefon +" . substr($tlf_num, 0, 4) . "______";
+
+			# Generate secure random 4 didget integer using urandom
+			$urandom = fopen('/dev/urandom', 'rb');
+			$seed = fread($urandom, 32);
+			fclose($urandom);
+			$seed = unpack('L', $seed)[1];
+			mt_srand($seed);
+			$random_integer = mt_rand(100000, 999999);
+
+			// Initialize cURL session
+			$ch = curl_init();
+
+			// Set cURL options
+			curl_setopt($ch, CURLOPT_URL, "https://rest.nexmo.com/sms/json");
+			curl_setopt($ch, CURLOPT_POST, 1);
+			curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
+				'from' => 'Saldi',
+				'text' => "Din tofaktor kode: $random_integer\nDen er valid i 3 minutter",
+				'to' => $r['email'],
+				'api_key' => $nexmo_api_key,
+				'api_secret' => $nexmo_api_secret
+			]));
+
+			// Execute cURL request
+			$result = curl_exec($ch);
+
+			// Check for errors
+			if ($result === false) {
+				echo 'cURL error: ' . curl_error($ch);
+			} else {
+				$current_time = time();
+				$expire = $current_time + 180; // Expires in 3 minutes
+				
+				db_modify("UPDATE brugere SET tmp_kode='$random_integer|$expire' WHERE id=$bruger_id", __FILE__ . "linje" . __LINE__);
+
+				include("tofaktor.php");
+			}
+			
+			// Close cURL session
+			curl_close($ch);
+			exit;
+		} else if ($status !== "success") {
+			include("tofaktor.php");
+			exit;
+		}
+	}
+	echo "2fa done";
+	# ###################################################
+	#
+	# 2FA SETUP DONE
+	#
+	# ###################################################
+	}
 	if ($post_max && $db!=$sqdb) {
 		$r=db_fetch_array(db_select("select box6 from grupper where art = 'RA' and kodenr = '$regnskabsaar'",__FILE__ . " linje " . __LINE__));
 		$post_antal=$r['box6']*1;
@@ -442,6 +585,7 @@ if(!isset($afbryd)){
 				include("../includes/online.php");
 			}
 			if ($globalId) {
+				$_SESSION['globalId']= $globalId; //20241202
 				$qtxt = "select id, var_value from settings where var_grp = 'globals' and var_name = 'globalId'"; 
 				if ($r = db_fetch_array(db_select($qtxt,__FILE__ . " linje " . __LINE__))) {
 					if ($r['var_value'] != $globalId) {
@@ -454,7 +598,12 @@ if(!isset($afbryd)){
 				}
 			}
 		}
-		if (substr($rettigheder,5,1)=='1') include("../debitor/rykkertjek.php");
+		#if (substr($rettigheder,5,1)=='1') include("../debitor/rykkertjek.php");
+		# Lager status mail
+		if (file_exists("../lager/lagerstatusmail.php")) {
+			$email = get_settings_value("mail", "lagerstatus", "");
+			if ($email) include("../lager/lagerstatusmail.php");
+		}
 #		transtjek();
 		}
 		if (file_exists("../utils/rotary_addrsync.php") && is_numeric($regnskab) && !file_exists("../temp/$db/rotary_addrsync.txt")) {
@@ -559,7 +708,18 @@ function online($regnskab,$db,$userId,$brugernavn,$password,$timestamp,$s_id) {
 function login($regnskab,$brugernavn,$fejltxt) {
 
 	$timestamp = time(); //unix timestamp
-	if (isset($_POST['vent'])) $vent=$_POST['vent'];
+	#if (isset($_POST['vent'])) $vent=$_POST['vent'];
+	if (isset($_POST['vent'])) { #20250314
+		if (strlen($_POST['vent']) > 80) {
+			// Sanitize the message by encoding any special characters
+			$message = htmlspecialchars("Input for vent is too long.", ENT_QUOTES, 'UTF-8');
+			echo "<script nonce='{$nonce}'>alert('$message');</script>";
+		
+			echo "<script nonce='{$nonce}'>window.location.href = 'index.php';</script>";
+        	exit;
+		}
+		$vent = htmlspecialchars($_POST['vent'], ENT_QUOTES, 'UTF-8'); 
+	}
 	if (!$vent) $vent=0;
 	sleep($vent);
 	$vent*=2;
@@ -580,10 +740,37 @@ function login($regnskab,$brugernavn,$fejltxt) {
 
 	include("../includes/std_func.php");
 
-	if (isset ($_GET['navn'])) $navn = html_entity_decode($_GET['navn'],ENT_COMPAT,$charset);
-	if (isset ($_GET['brugernavn'])) $navn = html_entity_decode($_GET['brugernavn'],ENT_COMPAT,$charset);
-	if (isset ($_GET['regnskab'])) $regnskab = html_entity_decode($_GET['regnskab'],ENT_COMPAT,$charset);
-	if (isset ($_GET['tlf'])) $kode = $_GET['tlf'];
+		// Define a function to sanitize input by removing special characters # 20250314
+		function sanitize_input($input) {
+			// Trim the input to remove any leading/trailing whitespace
+			$input = trim($input);
+			
+			// Remove any special characters that might lead to SQL injection
+			$input = preg_replace('/[^\w\s\-]/', '', $input);
+			
+			if (strlen($input) > 80) {
+				return false;
+			}
+			
+			return $input;
+		}
+
+		// Sanitize
+		if (isset($_GET['navn'])) {
+			$navn = sanitize_input(htmlspecialchars($_GET['navn'], ENT_COMPAT, $charset));
+		}
+
+		if (isset($_GET['brugernavn'])) {
+			$brugernavn = sanitize_input(htmlspecialchars($_GET['brugernavn'], ENT_COMPAT, $charset));
+		}
+
+		if (isset($_GET['regnskab'])) {
+			$regnskab = sanitize_input(htmlspecialchars($_GET['regnskab'], ENT_COMPAT, $charset));
+		}
+
+		if (isset($_GET['tlf'])) {
+			$tlf = sanitize_input($_GET['tlf']);
+		}
 		
 	if (isset($brug_timestamp)) {
 		?>
